@@ -27,6 +27,7 @@ def llm_generate(
     presence_penalty: float = 0,
     max_retries: int = 3,
     retry_delay: float = 2.0,
+    reasoning_effort: str = "high",
 ) -> str:
     """Get response from AI Suite chat completion with retry logic."""
     if client is None:
@@ -39,15 +40,28 @@ def llm_generate(
     last_exception = None
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                frequency_penalty=frequency_penalty,
-                presence_penalty=presence_penalty,
-                max_tokens=max_tokens,
-            )
+            if model_name == AI_GPT_MODEL:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                    max_completion_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
+            else:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                    max_tokens=max_tokens,
+                )
+
             return response.choices[0].message.content
         except Exception as e:
             last_exception = e
