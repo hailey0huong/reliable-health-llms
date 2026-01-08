@@ -1,0 +1,23 @@
+# Pipeline configuration for run_data_pipeline.py
+# Usage: python run_data_pipeline.py --config_file=configs/pipeline_config.yaml
+
+# Required: Input file with USMLE questions
+input_file: "data/cardiology_usmle_questions.json"
+
+# Output settings
+output_dir: "data"
+output_prefix: "cardiology_usmle_v1"
+
+# Model to use for LLM calls
+# Options: Use model names from shared.py (e.g., fireworks model)
+model_name: null # Uses default from shared.py if null
+
+# Steps to run: "all" or comma-separated list
+# Available steps: extract, classify, sample, rewrite, finalize
+steps: "all"
+
+# Step-specific parameters
+n_samples: 12 # Number of contrast sets per question (sample step)
+sample_seed: 42 # Random seed for sampling
+rewrite_max_rounds: 2 # Max verification rounds for rewriting
+finalize_seed: 42 # Random seed for final shuffle
