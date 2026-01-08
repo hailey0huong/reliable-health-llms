@@ -1,0 +1,10 @@
+# Usage: python -m run_benchmark --config_file=configs/experiment_gpt_oss.yaml
+
+# Required parameters
+benchmark_file: "data/cardiology_usmle_synthetic_benchmark_v1.json"
+model_name: "gpt-oss-120b" # Options: gpt-5.2, claude, gpt-oss-120b
+
+# Sampling parameters
+temperature: 0.6
+top_p: 1.0
+max_tokens: 4096

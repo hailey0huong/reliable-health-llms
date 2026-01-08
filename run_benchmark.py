@@ -6,8 +6,9 @@ import os
 import json
 import logging
 import fire
+import yaml
 from pipeline import shared
-from typing import List
+from typing import List, Optional
 
 logging.basicConfig(
    level=logging.INFO,
@@ -23,26 +24,29 @@ MODEL_MAPPING = {
 
 SYSTEM_PROMPT = """
 IMPORTANT OUTPUT REQUIREMENTS — MUST FOLLOW EXACTLY
-At the END of your response, you MUST include a final answer section.
-Formatting rules:
-1. Wrap your final answer in the following XML-style tags:
+You MAY include reasoning, justification, or explanation earlier in your response.
+However, the VERY LAST PART of your response MUST be the final answer, and it MUST follow the rules below.
+
+FINAL ANSWER RULES:
+1. The final answer MUST appear at the END of your response.
+   - No text, explanation, or whitespace may appear after it.
+2. Wrap the final answer using EXACTLY these tags:
    <final_answer> and </final_answer>
-
-2. Inside <final_answer>, write ONLY the selected answer option.
-   - Do NOT add explanations, comments, or extra text inside the tags.
-
-3. The answer inside <final_answer> MUST be an EXACT QUOTE from the question’s answer choices.
+3. Inside <final_answer>, write ONLY the selected answer option.
+   - Do NOT include explanations, reasoning, or commentary inside the tags.
+4. The answer inside <final_answer> MUST be an EXACT QUOTE from the question’s answer choices.
    - Include the option letter in parentheses.
-   - Preserve the original wording exactly as written in the question.
+   - Preserve the original wording exactly as written.
 
-Example of a correct format:
+Correct example:
 <final_answer>(D) Discontinuation of lisinopril</final_answer>
 
-Incorrect formats (DO NOT DO THESE):
-- Writing the answer without tags
-- Paraphrasing the option text
-- Omitting the option letter
-- Adding justification inside <final_answer>
+Incorrect examples:
+- Answer not at the end of the response
+- Any text after </final_answer>
+- Paraphrased option text
+- Missing option letter
+- Explanation inside <final_answer>
 
 Failure to follow these rules is an incorrect response."""
 
@@ -79,15 +83,51 @@ def compute_bucketed_accuracy(results: List) -> dict:
         bucket_accuracies[bucket] = correct / total
     return bucket_accuracies
 
+def load_config(config_file: str) -> dict:
+    """Load configuration from a YAML file."""
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"Config file {config_file} does not exist.")
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+    logger.info(f"Loaded config from {config_file}")
+    return config
+
 def run_benchmark(
-    benchmark_file: str,
-    model_name: str,
+    benchmark_file: Optional[str] = None,
+    model_name: Optional[str] = None,
     temperature: float = 1.0,
     top_p: float = 1.0,
     max_tokens: int = 4096,
     reasoning_effort: str = "high",
+    config_file: Optional[str] = None,
 ) -> None:
-    """Run benchmark on the specified model."""
+    """Run benchmark on the specified model.
+    
+    Args:
+        benchmark_file: Path to the benchmark JSON file.
+        model_name: Name of the model to use.
+        temperature: Sampling temperature.
+        top_p: Top-p sampling parameter.
+        max_tokens: Maximum tokens in response.
+        reasoning_effort: Reasoning effort level.
+        config_file: Path to YAML config file. If provided, overrides other arguments.
+    """
+    # Load config from file if provided
+    if config_file:
+        config = load_config(config_file)
+        benchmark_file = config.get("benchmark_file", benchmark_file)
+        model_name = config.get("model_name", model_name)
+        temperature = config.get("temperature", temperature)
+        top_p = config.get("top_p", top_p)
+        max_tokens = config.get("max_tokens", max_tokens)
+        reasoning_effort = config.get("reasoning_effort", reasoning_effort)
+    
+    # Validate required arguments
+    if not benchmark_file:
+        raise ValueError("benchmark_file is required. Provide it via argument or config file.")
+    if not model_name:
+        raise ValueError("model_name is required. Provide it via argument or config file.")
+
     if not os.path.exists(benchmark_file):
         raise FileNotFoundError(f"Benchmark file {benchmark_file} does not exist.")
     
@@ -176,7 +216,5 @@ def run_benchmark(
     shared.save_json(summary, summary_file)
     logger.info(f"Saved benchmark summary to {summary_file}")
 
-
-# python -m run_benchmark --benchmark_file=data/cardiology_usmle_synthetic_benchmark_v1.json --model_name=gpt-oss-120b --temperature=0.6
 if __name__ == "__main__":
     fire.Fire(run_benchmark)
