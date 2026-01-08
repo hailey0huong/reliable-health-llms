@@ -1,0 +1,17 @@
+{
+    "model_name": "gpt-oss-120b",
+    "average_accuracy": 0.6303317535545023,
+    "bucketed_accuracy": {
+        "hard_but_fair": 0.5346534653465347,
+        "answerable": 0.821917808219178,
+        "boundary_tests": 0.5135135135135135
+    },
+    "total_samples": 211,
+    "sampling_config": {
+        "model": "fireworks:accounts/fireworks/models/gpt-oss-120b",
+        "temperature": 0.6,
+        "top_p": 1.0,
+        "max_tokens": 4096,
+        "reasoning_effort": "high"
+    }
+}
