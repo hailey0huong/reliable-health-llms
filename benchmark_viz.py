@@ -483,6 +483,73 @@ HTML_TEMPLATE = """
             color: #3730a3;
         }}
         
+        .model-response-section {{
+            margin-bottom: 1.5rem;
+        }}
+        
+        .model-response-header {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }}
+        
+        .model-response-text {{
+            background: #f1f5f9;
+            padding: 1.25rem;
+            border-radius: 8px;
+            border-left: 4px solid #6366f1;
+            font-size: 1rem;
+            white-space: pre-wrap;
+            line-height: 1.7;
+        }}
+        
+        .model-info-bar {{
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 0.75rem 1rem;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            flex-wrap: wrap;
+        }}
+        
+        .model-name-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }}
+        
+        .correctness-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }}
+        
+        .correctness-badge.correct {{
+            background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+            color: #166534;
+            border: 1px solid #86efac;
+        }}
+        
+        .correctness-badge.incorrect {{
+            background: linear-gradient(135deg, #fee2e2, #fecaca);
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }}
+
         @media (max-width: 768px) {{
             body {{
                 padding: 1rem;
@@ -754,12 +821,30 @@ def generate_item_html(item: dict, index: int) -> str:
         </div>
         '''
     
-    # Check for "response" and "model_name" keys
+    # Build model info bar with response, model_name, and is_correct
+    model_info_html = ""
+    has_model_info = 'model_name' in item or 'is_correct' in item
+    if has_model_info:
+        model_info_parts = []
+        if 'model_name' in item:
+            model_info_parts.append(f'<span class="model-name-badge">🤖 {escape_html(item["model_name"])}</span>')
+        if 'is_correct' in item:
+            is_correct = item['is_correct']
+            if is_correct:
+                model_info_parts.append('<span class="correctness-badge correct">✓ Correct</span>')
+            else:
+                model_info_parts.append('<span class="correctness-badge incorrect">✗ Incorrect</span>')
+        model_info_html = f'<div class="model-info-bar">{"".join(model_info_parts)}</div>'
+    
+    # Model response section
     response_html = ""
     if 'response' in item:
-        response_html += f'<div class="prompt-section"><div class="section-label">💬 Model Response</div><div class="prompt-text">{escape_html(item["response"])}</div></div>'
-    if 'model_name' in item:
-        response_html += f'<div class="metadata-item"><div class="metadata-label">Model Name</div><div class="metadata-value">{escape_html(item["model_name"])}</div></div>'
+        response_html = f'''
+        <div class="model-response-section">
+            <div class="section-label">🤖 Model Response</div>
+            <div class="model-response-text">{escape_html(item["response"])}</div>
+        </div>
+        '''
     
     bucket_css = bucket.replace("-", "_")
     
@@ -770,10 +855,13 @@ def generate_item_html(item: dict, index: int) -> str:
             <span class="bucket-badge {bucket_css}">{format_bucket_name(bucket)}</span>
         </div>
         <div class="card-body">
+            {model_info_html}
+            
             <div class="prompt-section">
                 <div class="section-label">💬 Patient Prompt</div>
                 <div class="prompt-text">{prompt}</div>
             </div>
+            
             {response_html}
             
             <div class="correct-answer">
@@ -904,5 +992,6 @@ def main():
 
 # python benchmark_viz.py data/cardiology_usmle_synthetic_benchmark_v1.json -o data/benchmark_viz.html
 # python benchmark_viz.py results/benchmark_raw_results_gpt-5.2.json -o results/benchmark_viz_gpt-5.2.html
+# python benchmark_viz.py results/raw_results/benchmark_raw_results_gpt-oss-120b.json -o visualization/benchmark_viz_gpt-oss-120b.html
 if __name__ == "__main__":
     main()
