@@ -22,14 +22,35 @@ def llm_generate(
     system_prompt: str = None,
     temperature: float = 0.7,
     max_tokens: int = 4000,
-    top_p: float = 1,
+    top_p: Optional[float] = None,
     frequency_penalty: float = 0,
     presence_penalty: float = 0,
     max_retries: int = 3,
     retry_delay: float = 2.0,
     reasoning_effort: str = "high",
 ) -> str:
-    """Get response from AI Suite chat completion with retry logic."""
+    """Get response from AI Suite chat completion with retry logic.
+    
+    Args:
+        user_prompt: The user message to send
+        model_name: Model identifier (e.g., AI_GPT_MODEL, AI_CLAUDE_MODEL)
+        client: AI Suite client instance (created if None)
+        system_prompt: Optional system message
+        temperature: Sampling temperature (0-2)
+        max_tokens: Maximum tokens in response
+        top_p: Nucleus sampling parameter (optional, mutually exclusive with temperature for Claude)
+        frequency_penalty: Frequency penalty (GPT models only)
+        presence_penalty: Presence penalty (GPT models only)
+        max_retries: Number of retry attempts on failure
+        retry_delay: Base delay between retries (uses exponential backoff)
+        reasoning_effort: Reasoning effort level for GPT models ("low", "medium", "high")
+    
+    Returns:
+        The model's response text
+        
+    Raises:
+        Exception: If all retry attempts fail
+    """
     if client is None:
         client = get_client()
 
@@ -37,32 +58,44 @@ def llm_generate(
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
 
+    # Check if top_p is a valid number
+    has_valid_top_p = top_p is not None and isinstance(top_p, (int, float))
+
     last_exception = None
     for attempt in range(max_retries):
         try:
+            # Build kwargs based on model type
+            kwargs = {
+                "model": model_name,
+                "messages": messages,
+            }
+            
             if model_name == AI_GPT_MODEL:
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    frequency_penalty=frequency_penalty,
-                    presence_penalty=presence_penalty,
-                    max_completion_tokens=max_tokens,
-                    reasoning_effort=reasoning_effort,
-                )
+                # OpenAI GPT-specific parameters
+                kwargs["temperature"] = temperature
+                kwargs["max_completion_tokens"] = max_tokens
+                kwargs["reasoning_effort"] = reasoning_effort
+                kwargs["frequency_penalty"] = frequency_penalty
+                kwargs["presence_penalty"] = presence_penalty
+                if has_valid_top_p:
+                    kwargs["top_p"] = float(top_p)
+            elif "anthropic" in model_name:
+                # Anthropic Claude: temperature and top_p are mutually exclusive
+                kwargs["max_tokens"] = max_tokens
+                if has_valid_top_p:
+                    kwargs["top_p"] = float(top_p)
+                else:
+                    kwargs["temperature"] = temperature
             else:
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    frequency_penalty=frequency_penalty,
-                    presence_penalty=presence_penalty,
-                    max_tokens=max_tokens,
-                )
-
+                # Fireworks and other models
+                kwargs["temperature"] = temperature
+                kwargs["max_tokens"] = max_tokens
+                if has_valid_top_p:
+                    kwargs["top_p"] = float(top_p)
+            
+            response = client.chat.completions.create(**kwargs)
             return response.choices[0].message.content
+            
         except Exception as e:
             last_exception = e
             if attempt < max_retries - 1:
