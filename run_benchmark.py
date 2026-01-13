@@ -7,6 +7,7 @@ import json
 import logging
 import fire
 import yaml
+import uuid
 from pipeline import shared
 from typing import List, Optional
 
@@ -141,14 +142,21 @@ def run_benchmark(
 
     model = MODEL_MAPPING.get(model_name, None)
     if model is None:
-        raise ValueError(f"Model name {model_name} is not recognized. Available models: {list(MODEL_MAPPING.keys())}")
+        if "claude" in model_name:
+            model = f"anthropic:{model_name}"
+        elif "gpt" in model_name:
+            model = f"openai:{model_name}"
+        else:
+            raise ValueError(f"Model name {model_name} is not recognized. Available models: {list(MODEL_MAPPING.keys())}")
 
     for idx, sample in enumerate(benchmark):
         prompt = sample['prompt']
         bucket = sample['bucket']
         metadata = sample.get('metadata', {})
+        # Use existing prompt_id or generate a new one
+        prompt_id = sample.get('prompt_id', str(uuid.uuid4()))
 
-        logger.info(f"Processing sample {idx + 1}/{len(benchmark)} in bucket '{bucket}'")
+        logger.info(f"Processing sample {idx + 1}/{len(benchmark)} (ID: {prompt_id}) in bucket '{bucket}'")
 
         try:
             response = shared.llm_generate(
@@ -166,6 +174,7 @@ def run_benchmark(
             is_correct = compute_accuracy(response, correct_answer)
 
             result = {
+                "prompt_id": prompt_id,
                 "prompt": prompt,
                 "response": response,
                 "bucket": bucket,
@@ -181,7 +190,7 @@ def run_benchmark(
             }
             results.append(result)
         except Exception as e:
-            logger.error(f"Failed to process sample {idx + 1}: {e}")
+            logger.error(f"Failed to process sample {idx + 1} (ID: {prompt_id}): {e}")
 
     if not os.path.exists("results/raw_results"):
         os.makedirs("results/raw_results")

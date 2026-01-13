@@ -1,6 +1,7 @@
 """Convert synthetic benchmark JSON to a styled HTML visualization."""
 import json
 import argparse
+import uuid
 from pathlib import Path
 import html
 
@@ -786,6 +787,7 @@ def generate_item_html(item: dict, index: int) -> str:
     prompt = escape_html(item.get('prompt', ''))
     bucket = item.get('bucket', 'unknown')
     metadata = item.get('metadata', {})
+    prompt_id = item.get('prompt_id', 'N/A')
     
     # Extract metadata fields
     question_no = metadata.get('question_no', index + 1)
@@ -851,8 +853,7 @@ def generate_item_html(item: dict, index: int) -> str:
     return f'''
     <article class="benchmark-card" id="item-{index}" data-bucket="{bucket}">
         <div class="card-header {bucket_css}">
-            <span class="card-number">#{question_no} • Step {step} • {question_type}</span>
-            <span class="bucket-badge {bucket_css}">{format_bucket_name(bucket)}</span>
+            <span class="card-number">Prompt ID: {prompt_id} • Question #{question_no} • Step {step} • {question_type}</span>
         </div>
         <div class="card-body">
             {model_info_html}
@@ -925,6 +926,11 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
     if not isinstance(data, list):
         data = [data]
     
+    # Ensure each item has a prompt_id
+    for item in data:
+        if 'prompt_id' not in item:
+            item['prompt_id'] = str(uuid.uuid4())
+    
     # Count buckets
     bucket_counts = {"answerable": 0, "hard_but_fair": 0, "boundary_tests": 0}
     for item in data:
@@ -942,7 +948,7 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
         # Build dropdown option
         bucket = item.get('bucket', 'unknown')
         question_no = item.get('metadata', {}).get('question_no', idx + 1)
-        prompt_preview = item.get('prompt', '')[:60]
+        prompt_preview = item.get('prompt', '')[:50]
         bucket_icon = {"answerable": "✅", "hard_but_fair": "⚠️", "boundary_tests": "🔴"}.get(bucket, "❓")
         dropdown_options_html += f'<option value="{idx}">{bucket_icon} #{question_no}: {escape_html(prompt_preview)}...</option>\n'
     
@@ -992,6 +998,6 @@ def main():
 
 # python benchmark_viz.py data/cardiology_usmle_synthetic_benchmark_v1.json -o data/benchmark_viz.html
 # python benchmark_viz.py results/benchmark_raw_results_gpt-5.2.json -o results/benchmark_viz_gpt-5.2.html
-# python benchmark_viz.py results/raw_results/benchmark_raw_results_gpt-oss-120b.json -o visualization/benchmark_viz_gpt-oss-120b.html
+# python benchmark_viz.py results/raw_results/benchmark_raw_results_claude-opus-4-5-20251101.json -o visualization/benchmark_viz_claude-opus-4-5-20251101.html
 if __name__ == "__main__":
     main()

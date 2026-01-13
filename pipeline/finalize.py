@@ -5,6 +5,7 @@
 import os
 import json
 import logging
+import uuid
 from typing import List, Dict, Any
 from . import shared
 import random
@@ -16,15 +17,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def create_samples(question: Dict[str, Any]) -> Dict[str, Any]:
+def generate_prompt_id() -> str:
+    """Generate a unique prompt ID."""
+    return str(uuid.uuid4())
+
+def create_samples(question: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Create benchmark samples from a question entry."""
     samples = []
     for bucket, prompts in question['patient_prompts'].items():
         for prompt in prompts:
             # Add the last question from the original question and the choices to prompt
-            prompt = prompt.strip() + "\n" + question['question_context'].split(".")[-1] + "\n" + question['options']
+            prompt_text = prompt.strip() + "\n" + question['question_context'].split(".")[-1] + "\n" + question['options']
             sample = {
-                "prompt": prompt,
+                "prompt_id": generate_prompt_id(),
+                "prompt": prompt_text,
                 "bucket": bucket,
                 "metadata": {k: v for k, v in question.items() if k != "patient_prompts"},
             }
@@ -55,7 +61,7 @@ def create_benchmark(
         samples = create_samples(question)
         benchmark.extend(samples)
     
-    logger.info(f"Created {len(benchmark)} benchmark samples")
+    logger.info(f"Created {len(benchmark)} benchmark samples with unique prompt_ids")
     # Shuffle the benchmark samples
     random.seed(seed)
     random.shuffle(benchmark)
