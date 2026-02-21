@@ -1,0 +1,11 @@
+# Usage: python -m run_benchmark --config_file=configs/experiment_claude.yaml
+
+# Required parameters
+benchmark_file: "data/cardiology_usmle_v2_benchmark.json"
+model_name: "claude-opus-4-5-20251101" # Options: gpt-5.2, claude, gpt-oss-120b
+
+# Sampling parameters
+temperature: 0
+
+# Evaluation options
+include_original_questions: true
