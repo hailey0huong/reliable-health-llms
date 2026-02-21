@@ -8,6 +8,8 @@ import logging
 import fire
 import yaml
 import uuid
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pipeline import shared
 from typing import List, Optional
 
@@ -172,6 +174,7 @@ def run_benchmark(
     max_tokens: int = 4096,
     reasoning_effort: str = "high",
     include_original_questions: bool = False,
+    max_workers: int = 4,
     config_file: Optional[str] = None,
 ) -> None:
     """Run benchmark on the specified model.
@@ -186,6 +189,7 @@ def run_benchmark(
         include_original_questions: If True, also evaluate the model on the original
             USMLE question stems (metadata.question) alongside the patient prompts.
             Original-question results are stored with bucket="original".
+        max_workers: Number of concurrent threads for LLM calls (default 4).
         config_file: Path to YAML config file. If provided, overrides other arguments.
     """
     # Load config from file if provided
@@ -198,7 +202,8 @@ def run_benchmark(
         max_tokens = config.get("max_tokens", max_tokens)
         reasoning_effort = config.get("reasoning_effort", reasoning_effort)
         include_original_questions = config.get("include_original_questions", include_original_questions)
-    
+        max_workers = config.get("max_workers", max_workers)
+
     # Validate required arguments
     if not benchmark_file:
         raise ValueError("benchmark_file is required. Provide it via argument or config file.")
@@ -237,7 +242,6 @@ def run_benchmark(
         logger.info(f"Added {len(original_samples)} original-question samples (total: {len(benchmark)})")
 
     results = []
-    client = shared.get_client()
 
     model = MODEL_MAPPING.get(model_name, None)
     if model is None:
@@ -248,11 +252,11 @@ def run_benchmark(
         else:
             raise ValueError(f"Model name {model_name} is not recognized. Available models: {list(MODEL_MAPPING.keys())}")
 
-    for idx, sample in enumerate(benchmark):
+    def _process_sample(idx: int, sample: dict) -> Optional[dict]:
+        thread_client = shared.get_client()
         prompt = sample['prompt']
         bucket = sample['bucket']
         metadata = sample.get('metadata', {})
-        # Use existing prompt_id or generate a new one
         prompt_id = sample.get('prompt_id', str(uuid.uuid4()))
 
         logger.info(f"Processing sample {idx + 1}/{len(benchmark)} (ID: {prompt_id}) in bucket '{bucket}'")
@@ -262,19 +266,18 @@ def run_benchmark(
                 user_prompt=prompt,
                 system_prompt=SYSTEM_PROMPT,
                 model_name=model,
-                client=client,
+                client=thread_client,
                 temperature=temperature,
                 top_p=top_p,
                 max_tokens=max_tokens,
                 reasoning_effort=reasoning_effort,
             )
-            # Compute accuracy and extract confidence
             correct_answer = metadata.get("correct_response", "")
             is_correct = compute_accuracy(response, correct_answer)
             confidence = extract_confidence(response)
             confidence_reasoning = extract_confidence_reasoning(response)
 
-            result = {
+            return {
                 "prompt_id": prompt_id,
                 "prompt": prompt,
                 "response": response,
@@ -291,14 +294,38 @@ def run_benchmark(
                 "confidence_reasoning": confidence_reasoning,
                 "metadata": metadata,
             }
-            results.append(result)
         except Exception as e:
             logger.error(f"Failed to process sample {idx + 1} (ID: {prompt_id}): {e}")
+            return None
+
+    logger.info(f"Running benchmark with {max_workers} concurrent workers.")
+    results_map: dict = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for idx, sample in enumerate(benchmark):
+            future = executor.submit(_process_sample, idx, sample)
+            futures[future] = idx
+            time.sleep(0.5)  # Stagger submissions to avoid rate limits
+
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                result = future.result()
+                if result is not None:
+                    results_map[idx] = result
+            except Exception as e:
+                logger.error(f"Benchmark task failed for sample {idx + 1}: {e}")
+
+    # Assemble results in original order
+    for idx in range(len(benchmark)):
+        if idx in results_map:
+            results.append(results_map[idx])
 
     if not os.path.exists("results/raw_results"):
         os.makedirs("results/raw_results")
     
-    output_file = f"results/raw_results/benchmark_raw_results_{model_name.replace('/', '_')}.json"
+    output_file = f"results/raw_results/benchmark_raw_results_{model_name.replace('/', '_')}_{int(time.time())}.json"
     shared.save_json(results, output_file)
     logger.info(f"Saved raw benchmark results to {output_file}")
 
@@ -361,7 +388,7 @@ def run_benchmark(
     }
     if not os.path.exists("results/aggregated"):
         os.makedirs("results/aggregated")
-    summary_file = f"results/aggregated/benchmark_summary_{model_name.replace('/', '_')}.json"
+    summary_file = f"results/aggregated/benchmark_summary_{model_name.replace('/', '_')}_{int(time.time())}.json"
     shared.save_json(summary, summary_file)
     logger.info(f"Saved benchmark summary to {summary_file}")
 
