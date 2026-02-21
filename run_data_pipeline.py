@@ -8,7 +8,7 @@ import fire
 import yaml
 from typing import Optional
 
-from pipeline import extract, classify, sample, rewrite, finalize, shared
+from pipeline import extract, classify, sample, validate, rewrite, finalize, shared
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,10 +33,11 @@ def run_pipeline(
     output_dir: Optional[str] = "data",
     output_prefix: Optional[str] = "pipeline",
     model_name: Optional[str] = None,
-    steps: Optional[str] = "all",  # "all" or comma-separated: "extract,classify,sample,rewrite,finalize"
+    steps: Optional[str] = "all",  # "all" or comma-separated: "extract,classify,sample,validate,rewrite,finalize"
     # Step-specific parameters
     n_samples: int = 12,
     sample_seed: int = 42,
+    validate_max_retries: int = 2,
     rewrite_max_rounds: int = 2,
     finalize_seed: int = 42,
 ) -> None:
@@ -52,6 +53,7 @@ def run_pipeline(
         steps: Which steps to run ("all" or comma-separated list)
         n_samples: Number of samples to generate in sampling step
         sample_seed: Random seed for sampling
+        validate_max_retries: Max re-sample attempts per failed completeness check
         rewrite_max_rounds: Max verification rounds for rewriting
         finalize_seed: Random seed for final shuffle
     """
@@ -65,6 +67,7 @@ def run_pipeline(
         steps = config.get("steps", steps)
         n_samples = config.get("n_samples", n_samples)
         sample_seed = config.get("sample_seed", sample_seed)
+        validate_max_retries = config.get("validate_max_retries", validate_max_retries)
         rewrite_max_rounds = config.get("rewrite_max_rounds", rewrite_max_rounds)
         finalize_seed = config.get("finalize_seed", finalize_seed)
     
@@ -85,12 +88,13 @@ def run_pipeline(
     extracted_file = os.path.join(output_dir, f"{output_prefix}_extracted.json")
     classified_file = os.path.join(output_dir, f"{output_prefix}_classified.json")
     sampled_file = os.path.join(output_dir, f"{output_prefix}_sampled.json")
+    validated_file = os.path.join(output_dir, f"{output_prefix}_validated.json")
     rewritten_file = os.path.join(output_dir, f"{output_prefix}_rewritten.json")
     final_file = os.path.join(output_dir, f"{output_prefix}_benchmark.json")
     
     # Parse steps
     if steps == "all":
-        steps_to_run = ["extract", "classify", "sample", "rewrite", "finalize"]
+        steps_to_run = ["extract", "classify", "sample", "validate", "rewrite", "finalize"]
     else:
         steps_to_run = [s.strip().lower() for s in steps.split(",")]
     
@@ -144,13 +148,28 @@ def run_pipeline(
             seed=sample_seed,
         )
         current_input = sampled_file
-    elif "rewrite" in steps_to_run or "finalize" in steps_to_run:
+    elif "validate" in steps_to_run or "rewrite" in steps_to_run or "finalize" in steps_to_run:
         if os.path.exists(sampled_file):
             current_input = sampled_file
-    
-    # Step 4: Rewrite
+
+    # Step 4: Validate (clinical completeness check on answerable sets)
+    if "validate" in steps_to_run:
+        logger.info("=" * 20 + " STEP 4: VALIDATE " + "=" * 20)
+        validate.validate_all(
+            input_file=current_input,
+            output_file=validated_file,
+            model_name=model_name,
+            max_retries=validate_max_retries,
+            sample_seed=sample_seed,
+        )
+        current_input = validated_file
+    elif "rewrite" in steps_to_run or "finalize" in steps_to_run:
+        if os.path.exists(validated_file):
+            current_input = validated_file
+
+    # Step 5: Rewrite
     if "rewrite" in steps_to_run:
-        logger.info("=" * 20 + " STEP 4: REWRITE " + "=" * 20)
+        logger.info("=" * 20 + " STEP 5: REWRITE " + "=" * 20)
         rewrite.llm_rewrite_all(
             input_file=current_input,
             output_file=rewritten_file,
@@ -162,9 +181,9 @@ def run_pipeline(
         if os.path.exists(rewritten_file):
             current_input = rewritten_file
     
-    # Step 5: Finalize
+    # Step 6: Finalize
     if "finalize" in steps_to_run:
-        logger.info("=" * 20 + " STEP 5: FINALIZE " + "=" * 20)
+        logger.info("=" * 20 + " STEP 6: FINALIZE " + "=" * 20)
         finalize.create_benchmark(
             input_file=current_input,
             output_file=final_file,
