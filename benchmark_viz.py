@@ -184,6 +184,11 @@ HTML_TEMPLATE = """
             background: var(--danger-color);
             border-color: var(--danger-color);
         }}
+
+        .filter-btn.original.active {{
+            background: #7c3aed;
+            border-color: #7c3aed;
+        }}
         
         .benchmark-card {{
             background: var(--card-bg);
@@ -223,6 +228,11 @@ HTML_TEMPLATE = """
             background: linear-gradient(to right, #fee2e2, #fecaca);
             border-left: 4px solid var(--danger-color);
         }}
+
+        .card-header.original {{
+            background: linear-gradient(to right, #ede9fe, #ddd6fe);
+            border-left: 4px solid #7c3aed;
+        }}
         
         .card-number {{
             font-weight: 700;
@@ -252,6 +262,11 @@ HTML_TEMPLATE = """
         
         .bucket-badge.boundary_tests {{
             background: var(--danger-color);
+            color: white;
+        }}
+
+        .bucket-badge.original {{
+            background: #7c3aed;
             color: white;
         }}
         
@@ -551,6 +566,57 @@ HTML_TEMPLATE = """
             border: 1px solid #fca5a5;
         }}
 
+        .confidence-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            color: #0c4a6e;
+            border: 1px solid #7dd3fc;
+        }}
+
+        .confidence-badge.high {{
+            background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+            color: #166534;
+            border: 1px solid #86efac;
+        }}
+
+        .confidence-badge.medium {{
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            color: #92400e;
+            border: 1px solid #fcd34d;
+        }}
+
+        .confidence-badge.low {{
+            background: linear-gradient(135deg, #fee2e2, #fecaca);
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }}
+
+        .confidence-reasoning {{
+            background: #f0f9ff;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid #bae6fd;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+            color: #0c4a6e;
+            line-height: 1.6;
+        }}
+
+        .confidence-reasoning-label {{
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #0369a1;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.25rem;
+        }}
+
         @media (max-width: 768px) {{
             body {{
                 padding: 1rem;
@@ -597,6 +663,7 @@ HTML_TEMPLATE = """
                 <div class="stat-item">
                     <strong>{boundary_count}</strong> Boundary Tests
                 </div>
+                {original_stat_item}
             </div>
         </header>
         
@@ -605,6 +672,7 @@ HTML_TEMPLATE = """
             <button class="filter-btn answerable" onclick="filterByBucket('answerable')">Answerable</button>
             <button class="filter-btn hard_but_fair" onclick="filterByBucket('hard_but_fair')">Hard but Fair</button>
             <button class="filter-btn boundary_tests" onclick="filterByBucket('boundary_tests')">Boundary Tests</button>
+            {original_filter_btn}
         </div>
         
         <nav class="navigation">
@@ -823,9 +891,9 @@ def generate_item_html(item: dict, index: int) -> str:
         </div>
         '''
     
-    # Build model info bar with response, model_name, and is_correct
+    # Build model info bar with response, model_name, is_correct, and confidence
     model_info_html = ""
-    has_model_info = 'model_name' in item or 'is_correct' in item
+    has_model_info = 'model_name' in item or 'is_correct' in item or 'confidence' in item
     if has_model_info:
         model_info_parts = []
         if 'model_name' in item:
@@ -836,6 +904,15 @@ def generate_item_html(item: dict, index: int) -> str:
                 model_info_parts.append('<span class="correctness-badge correct">✓ Correct</span>')
             else:
                 model_info_parts.append('<span class="correctness-badge incorrect">✗ Incorrect</span>')
+        if item.get('confidence') is not None:
+            conf = item['confidence']
+            if conf >= 80:
+                conf_class = "high"
+            elif conf >= 50:
+                conf_class = "medium"
+            else:
+                conf_class = "low"
+            model_info_parts.append(f'<span class="confidence-badge {conf_class}">Confidence: {conf}/100</span>')
         model_info_html = f'<div class="model-info-bar">{"".join(model_info_parts)}</div>'
     
     # Model response section
@@ -845,6 +922,16 @@ def generate_item_html(item: dict, index: int) -> str:
         <div class="model-response-section">
             <div class="section-label">🤖 Model Response</div>
             <div class="model-response-text">{escape_html(item["response"])}</div>
+        </div>
+        '''
+
+    # Confidence reasoning section
+    confidence_reasoning_html = ""
+    if item.get('confidence_reasoning'):
+        confidence_reasoning_html = f'''
+        <div class="confidence-reasoning">
+            <div class="confidence-reasoning-label">Confidence Reasoning</div>
+            <div>{escape_html(item["confidence_reasoning"])}</div>
         </div>
         '''
     
@@ -864,7 +951,9 @@ def generate_item_html(item: dict, index: int) -> str:
             </div>
             
             {response_html}
-            
+
+            {confidence_reasoning_html}
+
             <div class="correct-answer">
                 <div class="correct-answer-label">✓ Correct Answer</div>
                 <div class="correct-answer-text">{correct_response}</div>
@@ -932,7 +1021,7 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
             item['prompt_id'] = str(uuid.uuid4())
     
     # Count buckets
-    bucket_counts = {"answerable": 0, "hard_but_fair": 0, "boundary_tests": 0}
+    bucket_counts = {"answerable": 0, "hard_but_fair": 0, "boundary_tests": 0, "original": 0}
     for item in data:
         bucket = item.get('bucket', 'unknown')
         if bucket in bucket_counts:
@@ -949,9 +1038,20 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
         bucket = item.get('bucket', 'unknown')
         question_no = item.get('metadata', {}).get('question_no', idx + 1)
         prompt_preview = item.get('prompt', '')[:50]
-        bucket_icon = {"answerable": "✅", "hard_but_fair": "⚠️", "boundary_tests": "🔴"}.get(bucket, "❓")
+        bucket_icon = {"answerable": "✅", "hard_but_fair": "⚠️", "boundary_tests": "🔴", "original": "📝"}.get(bucket, "❓")
         dropdown_options_html += f'<option value="{idx}">{bucket_icon} #{question_no}: {escape_html(prompt_preview)}...</option>\n'
     
+    # Conditionally show original bucket UI elements
+    has_original = bucket_counts["original"] > 0
+    original_filter_btn = (
+        '<button class="filter-btn original" onclick="filterByBucket(\'original\')">Original</button>'
+        if has_original else ""
+    )
+    original_stat_item = (
+        f'<div class="stat-item"><strong>{bucket_counts["original"]}</strong> Original</div>'
+        if has_original else ""
+    )
+
     # Fill in the template
     html_content = HTML_TEMPLATE.format(
         total_items=len(data),
@@ -959,7 +1059,9 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
         hard_count=bucket_counts["hard_but_fair"],
         boundary_count=bucket_counts["boundary_tests"],
         items_html=items_html,
-        options_html=dropdown_options_html
+        options_html=dropdown_options_html,
+        original_filter_btn=original_filter_btn,
+        original_stat_item=original_stat_item,
     )
     
     # Determine output file path
@@ -975,6 +1077,8 @@ def convert_benchmark_to_html(input_file: str, output_file: str = None):
     print(f"   - Answerable: {bucket_counts['answerable']}")
     print(f"   - Hard but Fair: {bucket_counts['hard_but_fair']}")
     print(f"   - Boundary Tests: {bucket_counts['boundary_tests']}")
+    if has_original:
+        print(f"   - Original: {bucket_counts['original']}")
     return output_file
 
 

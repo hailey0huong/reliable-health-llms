@@ -6,21 +6,23 @@ A research framework for evaluating LLM reliability on clinical question-answeri
 
 This framework:
 
-1. **Extracts** clinical information from USMLE-style medical questions
+1. **Extracts** clinical information from USMLE-style medical questions with discriminative weighting
 2. **Classifies** extracted conditions into clinical categories
-3. **Samples** contrast sets with varying difficulty levels
-4. **Rewrites** clinical facts into natural patient-style prompts
-5. **Evaluates** LLM accuracy on the generated benchmark
+3. **Samples** contrast sets with varying difficulty levels (with must-include guards)
+4. **Validates** sampled sets for clinical completeness via LLM check
+5. **Rewrites** clinical facts into realistic patient-voice prompts
+6. **Evaluates** LLM accuracy, confidence, and reasoning on the generated benchmark
 
 ## Project Structure
 
 ```
 reliable-health-llms/
 ├── pipeline/                    # Data generation pipeline modules
-│   ├── extract.py              # Extract clinical info from questions
+│   ├── extract.py              # Extract clinical info with discriminative weighting
 │   ├── classify.py             # Classify conditions into buckets
-│   ├── sample.py               # Sample contrast sets
-│   ├── rewrite.py              # Rewrite as patient prompts
+│   ├── sample.py               # Sample contrast sets with must-include guards
+│   ├── validate.py             # LLM completeness validation of sampled sets
+│   ├── rewrite.py              # Rewrite as realistic patient-voice prompts
 │   ├── finalize.py             # Create final benchmark
 │   └── shared.py               # Shared utilities and LLM config
 ├── configs/                     # Configuration files
@@ -100,8 +102,9 @@ python run_data_pipeline.py --config_file=configs/pipeline_config.yaml --steps=r
 | 1. Extract  | `python -m pipeline.extract`  | Raw questions | `*_extracted.json`  |
 | 2. Classify | `python -m pipeline.classify` | Extracted     | `*_classified.json` |
 | 3. Sample   | `python -m pipeline.sample`   | Classified    | `*_sampled.json`    |
-| 4. Rewrite  | `python -m pipeline.rewrite`  | Sampled       | `*_rewritten.json`  |
-| 5. Finalize | `python -m pipeline.finalize` | Rewritten     | `*_benchmark.json`  |
+| 4. Validate | `python -m pipeline.validate` | Sampled       | `*_validated.json`  |
+| 5. Rewrite  | `python -m pipeline.rewrite`  | Validated     | `*_rewritten.json`  |
+| 6. Finalize | `python -m pipeline.finalize` | Rewritten     | `*_benchmark.json`  |
 
 ### Pipeline Configuration
 
@@ -122,11 +125,23 @@ python run_benchmark.py \
     --benchmark_file=data/cardiology_usmle_v1_benchmark.json \
     --model_name=gpt-oss-120b \
     --temperature=0.6
+
+# Include original USMLE questions alongside patient prompts
+python run_benchmark.py \
+    --benchmark_file=data/cardiology_usmle_v1_benchmark.json \
+    --model_name=gpt-oss-120b \
+    --include_original_questions=true
 ```
 
 ### Evaluation Configuration
 
 Example `configs/experiment_sample.yaml`:
+
+### Evaluation Features
+
+- **Confidence scoring**: Each model response includes a calibrated confidence score (0-100) and reasoning
+- **Original question evaluation**: Optionally evaluate models on the original USMLE question stems alongside patient prompts (`include_original_questions: true`)
+- **Split reporting**: Results are reported separately for rewritten patient prompts and original question stems
 
 ### Available Models
 
@@ -143,10 +158,12 @@ After running evaluation:
 ```
 results/
 ├── raw_results/
-│   └── benchmark_raw_results_{model_name}.json    # Per-sample results
+│   └── benchmark_raw_results_{model_name}.json    # Per-sample results with confidence
 └── aggregated/
-    └── benchmark_summary_{model_name}.json        # Accuracy metrics
+    └── benchmark_summary_{model_name}.json        # Accuracy & confidence metrics (split by rewritten/original)
 ```
+
+Each raw result includes: `response`, `is_correct`, `confidence` (0-100), `confidence_reasoning`, and `bucket`.
 
 ---
 
