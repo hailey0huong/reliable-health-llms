@@ -199,6 +199,14 @@ python benchmark_viz.py results/raw_results/benchmark_raw_results_gpt-oss-120b.j
 open visualization/gpt-oss-120b_results.html
 ```
 
+## Benchmark Results
+
+```bash
+python compile_results.py --results_dir=results/raw_results --output_file=results/comparison.md
+```
+
+Full results can be found [here](results/comparison.md)
+
 ---
 
 ## License
