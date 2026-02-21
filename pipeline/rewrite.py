@@ -23,16 +23,60 @@ Each condition is a factual statement about the patient.
 Your task:
 - Combine ALL of the listed conditions into ONE short, natural-sounding message.
 - Write in simple, everyday language, as if a patient is talking to a chatbot.
-- Do NOT use medical terminology unless it appears exactly in the conditions.
 - Do NOT add, infer, assume, or invent any new information.
 - Do NOT remove or contradict any condition.
 - You may rephrase the wording, but the meaning of every condition must stay the same.
+
+REALISTIC PATIENT VOICE rules:
+- Physical exam findings must be converted to what a patient would EXPERIENCE or
+  what a DOCTOR TOLD THEM. Patients do not perform their own physical exams.
+  Transform like this:
+    "jugular venous distention 10 cm" -> "my neck veins are really swollen and bulging"
+    "holosystolic murmur at apex" -> "the doctor said I have a heart murmur"
+    "crackles on auscultation bilaterally" -> "the doctor said my lungs sound wet/crackly"
+    "absent lower extremity pulses" -> "I can't feel a pulse in my legs and they feel cold"
+    "hepatomegaly 3 cm below costal margin" -> "the doctor said my liver is enlarged and tender"
+    "S3 gallop" -> "the doctor heard an extra heart sound"
+    "pitting edema 2+ to 3+" -> "my legs are really swollen"
+- Lab values and imaging results should use plain framing:
+    "troponin I elevated" -> "my blood test showed a high troponin level"
+    "echocardiography showed anterolateral akinesis" -> "my heart ultrasound showed part of my heart wall isn't moving"
+    "LDL 170 mg/dL" -> "my LDL cholesterol is 170" (numbers are OK to keep)
+- Diagnoses the patient was told about should be framed as "the doctors diagnosed me with..." or "I was told I have..."
+- Medical abbreviations (STEMI, JVD, BMI) should be spelled out or described in plain language.
+- Keep the patient's age, sex, and timeline details — patients DO know and report these.
 
 IMPORTANT rules:
 - Use ONLY the information explicitly provided in the list of conditions.
 - If something is not stated in the conditions, do not mention it.
 - Do not explain or interpret the conditions.
 - Do not ask follow-up questions.
+
+EXAMPLES of good patient rewrites:
+
+Example 1:
+Conditions:
+1. 45-year-old male
+2. Tuberculous pericarditis diagnosed months ago
+3. Pericardiocentesis performed previously
+4. Increasing shortness of breath on minimal exertion over 2 weeks
+5. Fluid buildup and lower extremity swelling
+Good patient message: "I'm 45 years old and a couple of months ago I got tuberculosis that affected the lining of my heart. I even had to have fluid drained out of my heart. Now I'm developing fluid buildup all over my body and I'm getting more short of breath."
+
+Example 2:
+Conditions:
+1. 13-year-old boy
+2. Viral upper respiratory symptoms 1 week ago that resolved
+3. 3-day progressive fatigue, shortness of breath, difficulty walking up stairs
+4. Diagnosed with heart failure with fluid on lungs and low blood pressure
+Good patient message: "My 13 year old boy got sick with what seemed like the flu for a few days, then a few weeks passed and he had to be admitted to the hospital and the doctors diagnosed him with heart failure, with lots of fluid on his body and low blood pressure."
+
+Example 3:
+Conditions:
+1. 5 days post-admission for large heart attack (STEMI)
+2. Heart ultrasound showed front wall of heart not moving
+3. Cannot feel legs, legs feel cold
+Good patient message: "I've been in the hospital for 5 days after being diagnosed with a big heart attack. The doctor told me the whole front wall of my heart is not moving like it should. Now today, I can't feel my legs and they feel cold."
 
 Output format:
 - Wrap the final rewritten message between <patient_prompt> and </patient_prompt>.
@@ -74,6 +118,7 @@ Rules:
 - Use ONLY the conditions provided below (including the missing ones).
 - Do NOT add new information.
 - Keep a simple, everyday patient tone.
+- Physical exam findings should be expressed as what a patient experiences or what a doctor told them (e.g., "the doctor said my lungs sound crackly" not "crackles on auscultation").
 - Do not ask follow-up questions.
 - Make sure every condition is represented clearly (can be rephrased but same meaning).
 

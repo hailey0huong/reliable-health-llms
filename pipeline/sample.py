@@ -27,10 +27,19 @@ NEG_BUCKET = "NEGATIVE_FINDINGS"
 
 
 def _score(item: Item) -> float:
-    # Primary usefulness score: weight scaled by confidence.
+    """Primary usefulness score: weight scaled by confidence.
+
+    Applies a 1.15x boost for TIMING_COURSE items because temporal /
+    causal sequences are frequently the key discriminator between
+    answer choices (e.g., viral prodrome before myocarditis, post-MI
+    timing for mural thrombus) but tend to receive moderate weights.
+    """
     w = float(item.get("weight", 0.0))
     c = float(item.get("confidence", 0.0))
-    return max(0.0, w) * max(0.0, min(1.0, c))
+    base = max(0.0, w) * max(0.0, min(1.0, c))
+    if item.get("bucket") == "TIMING_COURSE":
+        base *= 1.15
+    return base
 
 
 def _jaccard(a: List[Item], b: List[Item]) -> float:
@@ -100,6 +109,27 @@ def _pick_size(rng: random.Random, avg_size: int = 3, mode: str = "answerable") 
     return max(1, avg_size)
 
 
+def _must_include_items(items: List[Item], confidence_floor: float = 0.70) -> List[Item]:
+    """
+    Identify items that MUST appear in answerable sets to prevent
+    unanswerable prompts.  Covers:
+      - High-weight DEMOGRAPHICS (age, sex) — often determines guideline
+        applicability (e.g. statin thresholds by age).
+      - High-weight PHYSICAL_EXAM vitals (blood pressure, heart rate) that
+        are decisive for the correct answer.
+      - High-weight LABS_IMAGING results that are decisive.
+    Only items with weight >= 7 and confidence >= floor are included.
+    """
+    MUST_INCLUDE_BUCKETS = {"DEMOGRAPHICS", "PHYSICAL_EXAM", "LABS_IMAGING"}
+    WEIGHT_FLOOR = 7.0
+    return [
+        i for i in items
+        if i.get("bucket") in MUST_INCLUDE_BUCKETS
+        and float(i.get("weight", 0.0)) >= WEIGHT_FLOOR
+        and float(i.get("confidence", 0.0)) >= confidence_floor
+    ]
+
+
 def _sample_answerable(rng: random.Random, items: List[Item]) -> List[Item]:
     clean = [i for i in items if float(i.get("confidence", 0.0)) >= 0.70]
     anchors = [i for i in clean if float(i.get("weight", 0.0)) >= 8.0 and i.get("bucket") in CORE_BUCKETS]
@@ -109,9 +139,17 @@ def _sample_answerable(rng: random.Random, items: List[Item]) -> List[Item]:
     target = _pick_size(rng, mode="answerable")
     selected: List[Item] = []
 
-    # 1 anchor if possible
+    # ---- Must-include: force high-weight demographics / vitals / labs ----
+    must = _must_include_items(clean)
+    for m in must:
+        if m["condition"] not in {s["condition"] for s in selected}:
+            selected.append(m)
+
+    # 1 anchor if possible (skip if already covered by must-includes)
     if anchors:
-        selected += _weighted_sample_without_replacement(rng, anchors, 1, _score)
+        anchor_pool = [a for a in anchors if a["condition"] not in {s["condition"] for s in selected}]
+        if anchor_pool:
+            selected += _weighted_sample_without_replacement(rng, anchor_pool, 1, _score)
 
     # Fill remaining using score, preferring >=3 weight
     sel_text = {i["condition"] for i in selected}
@@ -140,11 +178,45 @@ def _sample_answerable(rng: random.Random, items: List[Item]) -> List[Item]:
         if neg_pool:
             selected += _weighted_sample_without_replacement(rng, neg_pool, 1, _score)
 
-    # If we exceeded target due to ensure_core_coverage, trim lowest-score non-core first
+    # If we exceeded target due to must-includes / ensure_core_coverage,
+    # trim lowest-score items but NEVER trim must-include items.
     if len(selected) > target:
-        selected_sorted = sorted(selected, key=_score, reverse=True)
-        selected = selected_sorted[:target]
+        must_conditions = {m["condition"] for m in must}
+        trimmable = [s for s in selected if s["condition"] not in must_conditions]
+        protected = [s for s in selected if s["condition"] in must_conditions]
+        trimmable_sorted = sorted(trimmable, key=_score, reverse=True)
+        slots_for_trimmable = max(0, target - len(protected))
+        selected = protected + trimmable_sorted[:slots_for_trimmable]
 
+    return selected
+
+
+def _soft_include_demographics(
+    rng: random.Random,
+    items: List[Item],
+    selected: List[Item],
+    probability: float = 0.50,
+) -> List[Item]:
+    """With some probability, include a high-weight DEMOGRAPHICS item.
+
+    Unlike answerable's hard must-include, this is a soft guard for hard /
+    boundary sets: decision-critical demographics (age, sex) that received
+    weight >= 7 are included ~50% of the time.  This keeps the sets harder
+    while still preventing the most common failure mode (e.g., patient age
+    being completely absent when it drives guideline applicability).
+    """
+    if rng.random() > probability:
+        return selected
+    sel_text = {s["condition"] for s in selected}
+    demos = [
+        i for i in items
+        if i.get("bucket") == "DEMOGRAPHICS"
+        and float(i.get("weight", 0.0)) >= 7.0
+        and i["condition"] not in sel_text
+    ]
+    if demos:
+        best = max(demos, key=_score)
+        selected.append(best)
     return selected
 
 
@@ -155,9 +227,17 @@ def _sample_hard_but_fair(rng: random.Random, items: List[Item]) -> List[Item]:
     target = _pick_size(rng, mode="hard")
     selected: List[Item] = []
 
+    # Soft demographics guard: include decision-critical demographics ~50% of the time
+    selected = _soft_include_demographics(rng, clean, selected)
+
     # Usually avoid slam-dunk anchors; if include, make it contextual
     if rng.random() < 0.20:
-        contextual_anchors = [i for i in clean if float(i.get("weight", 0.0)) >= 8.0 and i.get("bucket") in CONTEXT_BUCKETS]
+        contextual_anchors = [
+            i for i in clean
+            if float(i.get("weight", 0.0)) >= 8.0
+            and i.get("bucket") in CONTEXT_BUCKETS
+            and i["condition"] not in {s["condition"] for s in selected}
+        ]
         if contextual_anchors:
             selected += _weighted_sample_without_replacement(rng, contextual_anchors, 1, _score)
 
@@ -170,13 +250,15 @@ def _sample_hard_but_fair(rng: random.Random, items: List[Item]) -> List[Item]:
     ]
     need = max(0, target - len(selected))
 
-    # Add novelty: slight boost for underrepresented buckets
+    # Add novelty: slight boost for underrepresented buckets.
+    # TIMING_COURSE already gets a 1.15x boost from _score(); here we
+    # add an additional novelty signal so temporal clues surface more often.
     bucket_counts = {}
     for it in selected:
         bucket_counts[it.get("bucket")] = bucket_counts.get(it.get("bucket"), 0) + 1
 
     def hard_weight(it: Item) -> float:
-        base = _score(it)
+        base = _score(it)  # already includes TIMING_COURSE boost
         b = it.get("bucket")
         novelty = 1.0 / (1.0 + bucket_counts.get(b, 0))
         return base * (0.85 + 0.15 * novelty)
@@ -194,24 +276,64 @@ def _sample_hard_but_fair(rng: random.Random, items: List[Item]) -> List[Item]:
 
     selected = _ensure_core_coverage(rng, selected, clean, min_core_buckets=1)
 
-    # Trim if needed
+    # Trim if needed — protect soft-included demographics from being trimmed
     if len(selected) > target:
-        selected = sorted(selected, key=_score, reverse=True)[:target]
+        demo_conditions = {
+            s["condition"] for s in selected
+            if s.get("bucket") == "DEMOGRAPHICS"
+            and float(s.get("weight", 0.0)) >= 7.0
+        }
+        trimmable = [s for s in selected if s["condition"] not in demo_conditions]
+        protected = [s for s in selected if s["condition"] in demo_conditions]
+        trimmable_sorted = sorted(trimmable, key=_score, reverse=True)
+        slots = max(0, target - len(protected))
+        selected = protected + trimmable_sorted[:slots]
 
     return selected
 
 
 def _make_variant_drop(base: List[Item]) -> List[Item]:
-    """Drop the highest-impact item (prefer CORE)."""
+    """Drop the highest-impact item (prefer CORE), but protect demographics.
+
+    Rules:
+    - NEVER drop high-weight DEMOGRAPHICS (weight >= 7): these are decision-
+      critical context (e.g., patient age) that, when absent, makes the prompt
+      unanswerable rather than merely harder.
+    - TIMING_COURSE items get a 1.3x impact multiplier because dropping them
+      removes causal/temporal context — the most effective way to make a
+      question genuinely harder.
+    - Other CORE items get a 1.2x multiplier (unchanged).
+    """
     if len(base) <= 1:
         return []
+
+    # Items that must NOT be dropped
+    protected = {
+        i["condition"] for i in base
+        if i.get("bucket") == "DEMOGRAPHICS"
+        and float(i.get("weight", 0.0)) >= 7.0
+    }
+
+    droppable = [i for i in base if i["condition"] not in protected]
+    if not droppable:
+        # Everything is protected — fall back to dropping lowest-weight item
+        lowest = min(base, key=_score)
+        return [i for i in base if i["condition"] != lowest["condition"]]
+
     def impact(it: Item) -> float:
-        mult = 1.2 if it.get("bucket") in CORE_BUCKETS else 1.0
+        bucket = it.get("bucket")
+        if bucket == "TIMING_COURSE":
+            mult = 1.3
+        elif bucket in CORE_BUCKETS:
+            mult = 1.2
+        else:
+            mult = 1.0
         return _score(it) * mult
-    ranked = sorted(base, key=impact, reverse=True)
-    # Prefer dropping a core item if present
-    core_first = next((i for i in ranked if i.get("bucket") in CORE_BUCKETS), ranked[0])
-    return [i for i in base if i["condition"] != core_first["condition"]]
+
+    ranked = sorted(droppable, key=impact, reverse=True)
+    # Prefer dropping a core item if present among droppable
+    to_drop = next((i for i in ranked if i.get("bucket") in CORE_BUCKETS), ranked[0])
+    return [i for i in base if i["condition"] != to_drop["condition"]]
 
 
 def generate_contrast_sets(

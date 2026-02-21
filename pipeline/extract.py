@@ -41,8 +41,23 @@ Follow these rules EXACTLY:
    - “Which of the following is the best treatment…”
 4. ONLY extract facts that would remain true even if the question prompt and all answer choices were completely removed.
 5. Each extracted item must be understandable on its own without needing the original question text.
-6. Assign each item an importance weight from 0 to 10 based on how critical it is for answering the question correctly.
+6. Assign each item an importance weight from 0 to 10 using the DISCRIMINATIVE weighting scale below.
    - Add the weight using double square brackets: [[weight]]
+   DISCRIMINATIVE WEIGHTING SCALE:
+   - 9-10: DISCRIMINATIVE — this fact distinguishes the correct answer from the other options.
+           A finding that is specific to the correct diagnosis/answer and NOT expected in
+           the wrong answer choices should score here.
+   - 7-8:  STRONGLY SUPPORTIVE — significantly narrows the differential but not unique to
+           the correct answer alone.
+   - 5-6:  CONSISTENT — present in the correct answer but also expected in multiple wrong
+           answers. For example, if the question asks for the CAUSE of heart failure, signs
+           of heart failure itself (e.g., crackles, gallop, edema) score here because they
+           describe the syndrome, not its specific cause.
+   - 3-4:  CONTEXTUAL — provides background (demographics, risk factors) that guides
+           interpretation but does not independently point to the answer.
+           EXCEPTION: if a demographic fact (e.g., patient age) directly determines
+           guideline applicability or changes which answer is correct, score it 7-8.
+   - 1-2:  BACKGROUND — baseline information with minimal diagnostic impact.
 7. After each item, include a brief justification for the weight.
    - Wrap the justification in double curly braces: {{explanation}}
 
@@ -62,10 +77,10 @@ After completing <conditions>, answer the question using ONLY the extracted item
    - Wrap the quoted option in double square brackets.
 6. Wrap your final answer between <correct_answer> and </correct_answer>
 
-## OUTPUT FORMAT
+## OUTPUT FORMAT (EXAMPLE ONLY — DO NOT COPY THIS TEXT!):
 <conditions>
-1. ...
-2. ...
+1. 67-year-old woman [[4]] {{Age and sex provide demographic context but do not uniquely point to one answer.}}
+2. Presents with sudden-onset tearing chest pain radiating to the back [[9]] {{Tearing pain radiating to back is highly specific to aortic dissection, distinguishing it from other causes of chest pain.}}
 </conditions>
 
 <correct_answer>
@@ -93,10 +108,23 @@ def parse_clinical_conditions(text: str):
       if not row.strip():
          continue
             
-      # Pattern to capture: number, item text, weight [[]], explanation {{}}
-      pattern = r'^(\d+)\.\s+(.+?)\s+\[\[(\d+)\]\]\s+\{\{(.+?)\}\}$'
+      # Primary pattern: number, item text, weight [[]], explanation {{}} or {}
+      pattern = r'^(\d+)\.\s+(.+?)\s+\[\[(\d+)\]\]\s+\{\{?(.+?)\}?\}$'
       match = re.match(pattern, row.strip())
-        
+
+      if not match:
+         # Fallback pattern: number, item text, explanation {{}} or {}, weight [[]]
+         pattern_alt = r'^(\d+)\.\s+(.+?)\s+\{\{?(.+?)\}?\}\s+\[\[(\d+)\]\]$'
+         match = re.match(pattern_alt, row.strip())
+         if match:
+            # Reorder groups: condition is group 2, weight is group 4, explanation is group 3
+            results.append({
+                  'condition': match.group(2).strip(),
+                  'weight': int(match.group(4)),
+                  'explanation': match.group(3).strip()
+            })
+            continue
+
       if match:
          results.append({
                 'condition': match.group(2).strip(),
