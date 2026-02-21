@@ -94,7 +94,11 @@ def llm_generate(
                     kwargs["top_p"] = float(top_p)
             
             response = client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            if content is None:
+                finish_reason = getattr(response.choices[0], 'finish_reason', 'unknown')
+                logger.warning(f"LLM returned None content. finish_reason={finish_reason}, model={model_name}")
+            return content
             
         except Exception as e:
             last_exception = e
