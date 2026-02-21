@@ -7,6 +7,8 @@ import json
 import fire
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple, Optional
 from . import shared
 
@@ -221,17 +223,14 @@ def rewrite_with_self_check(
 
 def llm_rewrite_single_question(
         question: Dict[str, Any],
-        client: Any,
         model_name: str = shared.AI_FIREWORKS_MODEL,
         max_rounds: int = 2,
         temperature_rewrite: float = 0.4,
         temperature_verify: float = 0.0,
+        max_workers: int = 4,
 ):
-    patient_prompts = {
-        "answerable": [],
-        "hard_but_fair": [],
-        "boundary_tests": [],
-    }
+    # Collect all tasks: (bucket, index, conditions)
+    tasks: List[Tuple[str, int, List[Dict[str, Any]]]] = []
 
     for bucket, items in question['sampled_sets'].items():
         if bucket not in ["answerable", "hard_but_fair", "boundary_tests"]:
@@ -240,29 +239,51 @@ def llm_rewrite_single_question(
 
         logger.info(f"Rewriting {len(items)} items in bucket '{bucket}' for question ID {question['question_no']}.")
         if bucket == "boundary_tests":
-            for pair in items:
-                variant_conditions = pair['variant_drop']
-
-                variant_prompt, _ = rewrite_with_self_check(
-                    variant_conditions,
-                    client=client,
-                    model_name=model_name,
-                    max_rounds=max_rounds,
-                    temperature_rewrite=temperature_rewrite,
-                    temperature_verify=temperature_verify,
-                )
-                patient_prompts[bucket].append(variant_prompt)
+            for i, pair in enumerate(items):
+                tasks.append((bucket, i, pair['variant_drop']))
         else:
-            for item in items:
-                prompt, _ = rewrite_with_self_check(
-                    item,
-                    client=client,
-                    model_name=model_name,
-                    max_rounds=max_rounds,
-                    temperature_rewrite=temperature_rewrite,
-                    temperature_verify=temperature_verify,
-                )
-                patient_prompts[bucket].append(prompt)
+            for i, item in enumerate(items):
+                tasks.append((bucket, i, item))
+
+    # Run tasks concurrently
+    results_map: Dict[Tuple[str, int], str] = {}
+
+    def _run_task(bucket: str, idx: int, conditions: List[Dict[str, Any]]) -> Tuple[str, int, str]:
+        thread_client = shared.get_client()
+        prompt, _ = rewrite_with_self_check(
+            conditions,
+            client=thread_client,
+            model_name=model_name,
+            max_rounds=max_rounds,
+            temperature_rewrite=temperature_rewrite,
+            temperature_verify=temperature_verify,
+        )
+        return bucket, idx, prompt
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for task in tasks:
+            futures.append(executor.submit(_run_task, *task))
+            time.sleep(0.5)  # Stagger submissions to avoid rate limits
+
+        for future in as_completed(futures):
+            try:
+                bucket, idx, prompt = future.result()
+                results_map[(bucket, idx)] = prompt
+            except Exception as e:
+                logger.error(f"Rewrite task failed: {e}")
+
+    # Assemble results in original order
+    patient_prompts: Dict[str, List[str]] = {
+        "answerable": [],
+        "hard_but_fair": [],
+        "boundary_tests": [],
+    }
+    for bucket in ["answerable", "hard_but_fair", "boundary_tests"]:
+        items = question['sampled_sets'].get(bucket, [])
+        for i in range(len(items)):
+            patient_prompts[bucket].append(results_map.get((bucket, i), ""))
+
     return patient_prompts
 
 def llm_rewrite_all(
@@ -272,15 +293,14 @@ def llm_rewrite_all(
         max_rounds: int = 2,
         temperature_rewrite: float = 0.9,
         temperature_verify: float = 0.6,
+        max_workers: int = 4,
 ):
-    client = shared.get_client()
-
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file {input_file} does not exist.")
-    
+
     with open(input_file, 'r') as f:
         questions = json.load(f)
-    
+
     logger.info(f"Loaded {len(questions)} questions from {input_file}")
 
     results = []
@@ -289,11 +309,11 @@ def llm_rewrite_all(
         logger.info(f"Processing question {idx + 1}/{len(questions)} (ID: {question['question_no']})")
         patient_prompts = llm_rewrite_single_question(
             question,
-            client,
             model_name=model_name,
             max_rounds=max_rounds,
             temperature_rewrite=temperature_rewrite,
             temperature_verify=temperature_verify,
+            max_workers=max_workers,
         )
         question['patient_prompts'] = patient_prompts
         results.append(question)
