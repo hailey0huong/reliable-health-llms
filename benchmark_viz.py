@@ -1102,6 +1102,6 @@ def main():
 
 # python benchmark_viz.py data/cardiology_usmle_synthetic_benchmark_v1.json -o data/benchmark_viz.html
 # python benchmark_viz.py results/benchmark_raw_results_gpt-5.2.json -o results/benchmark_viz_gpt-5.2.html
-# python benchmark_viz.py results/raw_results/benchmark_raw_results_claude-opus-4-5-20251101.json -o visualization/benchmark_viz_claude-opus-4-5-20251101.html
+# python benchmark_viz.py results/raw_results/benchmark_raw_results_gpt-5.2.json -o visualization/benchmark_viz_v2_gpt-5-2.html
 if __name__ == "__main__":
     main()
