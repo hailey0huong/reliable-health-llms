@@ -33,9 +33,7 @@ confidence score, following the rules below.
 
 FINAL ANSWER RULES:
 1. The final answer MUST appear at the END of your response.
-   - No text, explanation, or whitespace may appear after it (except the confidence tag).
-2. Wrap the final answer using EXACTLY these tags:
-   <final_answer> and </final_answer>
+2. Wrap the final answer using EXACTLY these tags <final_answer> and </final_answer>
 3. Inside <final_answer>, write ONLY the selected answer option.
    - Do NOT include explanations, reasoning, or commentary inside the tags.
 4. The answer inside <final_answer> MUST be an EXACT QUOTE from the question's answer choices.
@@ -43,25 +41,23 @@ FINAL ANSWER RULES:
    - Preserve the original wording exactly as written.
 
 CONFIDENCE SCORE RULES:
-1. Immediately AFTER </final_answer>, provide a confidence reasoning block.
-2. Wrap it using EXACTLY these tags: <confidence_reasoning> and </confidence_reasoning>
-3. Inside <confidence_reasoning>, write 1-3 sentences explaining WHY you chose this
+1. Immediately AFTER </final_answer>, provide a confidence reasoning block between these tags: <confidence_reasoning> and </confidence_reasoning>
+2. Inside <confidence_reasoning>, write 1-3 sentences explaining WHY you chose this
    confidence level. Address:
    - What key information was present that supports your answer?
    - What critical information was missing or ambiguous (if any)?
    - Were there other plausible answer choices you considered?
-4. Immediately AFTER </confidence_reasoning>, provide the confidence score.
-5. Wrap the score using EXACTLY these tags: <confidence> and </confidence>
-6. Inside <confidence>, write ONLY a single integer from 0 to 100.
+3. Immediately AFTER </confidence_reasoning>, provide the confidence score between <confidence> and </confidence>
+4. Inside <confidence>, write ONLY a single integer from 0 to 100.
    - 0 means you are purely guessing with no basis.
    - 100 means you are absolutely certain the answer is correct.
    - Calibrate honestly: if you think there is a 60% chance you are correct, write 60.
-7. Your confidence should reflect how sufficient the PROVIDED information is to answer
+5. Your confidence should reflect how sufficient the PROVIDED information is to answer
    the question. If critical information is missing, your confidence should be LOW even
    if you can make an educated guess.
-8. Do NOT default to high confidence. Be honest about uncertainty.
+6. Do NOT default to high confidence. Be honest about uncertainty.
 
-Correct example:
+Correct example (EXAMPLE ONLY — DO NOT COPY THIS EXACT CONTENT):
 <final_answer>(D) Discontinuation of lisinopril</final_answer>
 <confidence_reasoning>The patient's persistent dry cough starting after initiation of lisinopril is a classic ACE inhibitor side effect. No other medication changes or respiratory conditions were mentioned. I am fairly confident but not certain, as other causes of cough were not fully excluded.</confidence_reasoning>
 <confidence>82</confidence>
@@ -105,15 +101,20 @@ def extract_confidence_reasoning(model_response: str) -> Optional[str]:
     return raw.strip()
 
 
-def compute_accuracy(model_response: str, correct_answer: str) -> bool:
-    """Compute if the model response matches the correct answer."""
+def compute_accuracy(model_response: str, correct_answer: str) -> tuple:
+    """Compute if the model response matches the correct answer.
+
+    Returns:
+        (is_correct, answer_extracted): is_correct is True if the answer matches,
+        answer_extracted is False if <final_answer> tags were missing.
+    """
     start_tag = "<final_answer>"
     end_tag = "</final_answer>"
     extracted_answer = shared.extract_between_tags(model_response, start_tag, end_tag)
     if extracted_answer is None:
         logger.warning(f"Could not extract final answer from model response: {model_response}")
-        return False
-    return extracted_answer.strip() == correct_answer.strip()
+        return False, False
+    return extracted_answer.strip() == correct_answer.strip(), True
 
 def compute_average_accuracy(results: List) -> float:
     """Compute average accuracy from the results."""
@@ -273,9 +274,10 @@ def run_benchmark(
                 reasoning_effort=reasoning_effort,
             )
             correct_answer = metadata.get("correct_response", "")
-            is_correct = compute_accuracy(response, correct_answer)
+            is_correct, answer_extracted = compute_accuracy(response, correct_answer)
             confidence = extract_confidence(response)
             confidence_reasoning = extract_confidence_reasoning(response)
+            invalid_format = not answer_extracted or confidence is None
 
             return {
                 "prompt_id": prompt_id,
@@ -290,8 +292,10 @@ def run_benchmark(
                     "reasoning_effort": reasoning_effort,
                 },
                 "is_correct": is_correct,
+                "answer_extracted": answer_extracted,
                 "confidence": confidence,
                 "confidence_reasoning": confidence_reasoning,
+                "invalid_format": invalid_format,
                 "metadata": metadata,
             }
         except Exception as e:
@@ -334,12 +338,14 @@ def run_benchmark(
     original_results = [r for r in results if r.get("bucket") == "original"]
 
     def _compute_section_metrics(section_results: List) -> dict:
+        invalid_count = sum(1 for r in section_results if r.get("invalid_format", False))
         return {
             "average_accuracy": compute_average_accuracy(section_results),
             "bucketed_accuracy": compute_bucketed_accuracy(section_results),
             "average_confidence": compute_average_confidence(section_results),
             "bucketed_confidence": compute_bucketed_confidence(section_results),
             "total_samples": len(section_results),
+            "invalid_format_count": invalid_count,
         }
 
     def _log_section(label: str, metrics: dict) -> None:
@@ -348,6 +354,9 @@ def run_benchmark(
         avg_conf = metrics["average_confidence"]
         if avg_conf is not None:
             logger.info(f"  Average Confidence: {avg_conf:.1f}")
+        invalid = metrics.get("invalid_format_count", 0)
+        if invalid > 0:
+            logger.warning(f"  Invalid Format: {invalid}/{metrics['total_samples']} responses missing answer or confidence tags")
         all_buckets = sorted(set(
             list(metrics["bucketed_accuracy"].keys())
             + list(metrics["bucketed_confidence"].keys())
@@ -372,11 +381,13 @@ def run_benchmark(
         _log_section("Original question stems", original_metrics)
 
     # Save summary
+    total_invalid = sum(1 for r in results if r.get("invalid_format", False))
     summary = {
         "model_name": model_name,
         "rewritten_prompts": rewritten_metrics,
         "original_prompts": original_metrics,
         "total_samples": len(results),
+        "invalid_format_count": total_invalid,
         "include_original_questions": include_original_questions,
         "sampling_config": {
             "model": model,
